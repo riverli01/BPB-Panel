@@ -20,6 +20,7 @@ async function buildClashDNS (proxySettings, isChain, isWarp) {
     const warpRemoteDNS = warpEnableIPv6 
         ? ["1.1.1.1", "1.0.0.1", "[2606:4700:4700::1111]", "[2606:4700:4700::1001]"] 
         : ["1.1.1.1", "1.0.0.1"];
+    const finalLocalDNS = localDNS === 'localhost' ? 'system' : `${localDNS}#DIRECT`;
     const isFakeDNS = (VLTRFakeDNS && !isWarp) || (warpFakeDNS && isWarp);
     const isIPv6 = (enableIPv6 && !isWarp) || (warpEnableIPv6 && isWarp);
     const customBypassRulesDomains = customBypassRules.split(',').filter(address => isDomain(address));
@@ -39,11 +40,10 @@ async function buildClashDNS (proxySettings, isChain, isWarp) {
         "nameserver": isWarp 
             ? warpRemoteDNS.map(dns => `${dns}#✅ Selector`) 
             : [isChain ? `${remoteDNS}#proxy-1` : `${remoteDNS}#✅ Selector`],
-        "proxy-server-nameserver": [`${localDNS}#DIRECT`],
+        "proxy-server-nameserver": [finalLocalDNS],
         "nameserver-policy": {
-            "raw.githubusercontent.com": `${localDNS}#DIRECT`,
-            "time.apple.com": `${localDNS}#DIRECT`,
-            "www.gstatic.com": "system"
+            "raw.githubusercontent.com": finalLocalDNS,
+            "time.apple.com": finalLocalDNS
         }
     };
 
@@ -58,11 +58,11 @@ async function buildClashDNS (proxySettings, isChain, isWarp) {
             rule && geosites.push(geosite)
         });
 
-        dns["nameserver-policy"][`rule-set:${geosites.join(',')}`] = [`${localDNS}#DIRECT`];
+        dns["nameserver-policy"][`rule-set:${geosites.join(',')}`] = [finalLocalDNS];
     }
 
     customBypassRulesDomains.forEach( domain => {
-        dns["nameserver-policy"][`+.${domain}`] = [`${localDNS}#DIRECT`];
+        dns["nameserver-policy"][`+.${domain}`] = [finalLocalDNS];
     });
 
     const dohHost = getDomain(remoteDNS);
@@ -260,13 +260,13 @@ function buildClashVLOutbound (remark, address, port, host, sni, path, allowInse
         "server": addr,
         "port": +port,
         "uuid": userID,
-        "packet-encoding": "",
+        "packet-encoding": "packetaddr",
         "tls": tls,
         "network": "ws",
         "udp": true,
         "ws-opts": {
             "path": path,
-            "headers": { "host": host },
+            "headers": { "Host": host },
             "max-early-data": 2560,
             "early-data-header-name": "Sec-WebSocket-Protocol"
         }
@@ -275,7 +275,7 @@ function buildClashVLOutbound (remark, address, port, host, sni, path, allowInse
     if (tls) {
         Object.assign(outbound, {
             "servername": sni,
-            "alpn": ["h2", "http/1.1"],
+            "alpn": ["http/1.1"],
             "client-fingerprint": "random",
             "skip-cert-verify": allowInsecure
         });
@@ -296,18 +296,19 @@ function buildClashTROutbound (remark, address, port, host, sni, path, allowInse
         "udp": true,
         "ws-opts": {
             "path": path,
-            "headers": { "host": host },
+            "headers": { "Host": host },
             "max-early-data": 2560,
             "early-data-header-name": "Sec-WebSocket-Protocol"
         },
         "sni": sni,
-        "alpn": ["h2", "http/1.1"],
+        "alpn": ["http/1.1"],
         "client-fingerprint": "random",
         "skip-cert-verify": allowInsecure
     };
 }
 
-function buildClashWarpOutbound (warpConfigs, remark, endpoint, chain) {
+function buildClashWarpOutbound (proxySettings, warpConfigs, remark, endpoint, chain, isPro) {
+    const { amneziaNoiseCount, amneziaNoiseSizeMin, amneziaNoiseSizeMax } = proxySettings;
     const ipv6Regex = /\[(.*?)\]/;
     const portRegex = /[^:]*$/;
     const endpointServer = endpoint.includes('[') ? endpoint.match(ipv6Regex)[1] : endpoint.split(':')[0];
@@ -335,6 +336,11 @@ function buildClashWarpOutbound (warpConfigs, remark, endpoint, chain) {
     };
 
     if (chain) outbound["dialer-proxy"] = chain;
+    if (isPro) outbound["amnezia-wg-option"] = {
+        "jc": amneziaNoiseCount,
+        "jmin": amneziaNoiseSizeMin,
+        "jmax": amneziaNoiseSizeMax
+    }
     return outbound;
 }
 
@@ -418,7 +424,7 @@ function buildClashChainOutbound(chainProxyParams) {
     return chainOutbound;
 }
 
-export async function getClashWarpConfig(request, env) {
+export async function getClashWarpConfig(request, env, isPro) {
     const { proxySettings, warpConfigs } = await getDataset(request, env);
     const { warpEndpoints } = proxySettings;
     const config = structuredClone(clashConfigTemp);
@@ -428,19 +434,19 @@ export async function getClashWarpConfig(request, env) {
     config['rule-providers'] = ruleProviders;
     const selector = config['proxy-groups'][0];
     const warpUrlTest = config['proxy-groups'][1];
-    selector.proxies = ['💦 Warp - Best Ping 🚀', '💦 WoW - Best Ping 🚀'];
-    warpUrlTest.name = '💦 Warp - Best Ping 🚀';
+    selector.proxies = [`💦 Warp ${isPro? 'Pro ' : ''}- Best Ping 🚀`, `💦 WoW ${isPro? 'Pro ' : ''}- Best Ping 🚀`];
+    warpUrlTest.name = `💦 Warp ${isPro? 'Pro ' : ''}- Best Ping 🚀`;
     warpUrlTest.interval = +proxySettings.bestWarpInterval;
     config['proxy-groups'].push(structuredClone(warpUrlTest));
     const WoWUrlTest = config['proxy-groups'][2];
-    WoWUrlTest.name = '💦 WoW - Best Ping 🚀';
+    WoWUrlTest.name = `💦 WoW ${isPro? 'Pro ' : ''}- Best Ping 🚀`;
     let warpRemarks = [], WoWRemarks = [];
     
     warpEndpoints.split(',').forEach( (endpoint, index) => {
-        const warpRemark = `💦 ${index + 1} - Warp 🇮🇷`;
-        const WoWRemark = `💦 ${index + 1} - WoW 🌍`;
-        const warpOutbound = buildClashWarpOutbound(warpConfigs, warpRemark, endpoint, '');
-        const WoWOutbound = buildClashWarpOutbound(warpConfigs, WoWRemark, endpoint, warpRemark);
+        const warpRemark = `💦 ${index + 1} - Warp ${isPro? 'Pro ' : ''}🇮🇷`;
+        const WoWRemark = `💦 ${index + 1} - WoW ${isPro? 'Pro ' : ''}🌍`;
+        const warpOutbound = buildClashWarpOutbound(proxySettings, warpConfigs, warpRemark, endpoint, '', isPro);
+        const WoWOutbound = buildClashWarpOutbound(proxySettings, warpConfigs, WoWRemark, endpoint, warpRemark);
         config.proxies.push(WoWOutbound, warpOutbound);
         warpRemarks.push(warpRemark);
         WoWRemarks.push(WoWRemark);
@@ -585,8 +591,8 @@ const clashConfigTemp = {
     "mode": "rule",
     "log-level": "warning",
     "disable-keep-alive": false,
-    "keep-alive-idle": 30,
-    "keep-alive-interval": 30,
+    "keep-alive-idle": 10,
+    "keep-alive-interval": 15,
     "unified-delay": false,
     "geo-auto-update": true,
     "geo-update-interval": 168,
@@ -608,7 +614,10 @@ const clashConfigTemp = {
         "auto-route": true,
         "strict-route": true,
         "auto-detect-interface": true,
-        "dns-hijack": ["any:53"],
+        "dns-hijack": [
+            "any:53",
+            "tcp://any:53"
+        ],
         "mtu": 9000
     },
     "sniffer": {

@@ -44,7 +44,7 @@ function buildSingBoxDNS (proxySettings, outboundAddrs, isWarp) {
             tag: "dns-remote"
         },
         {
-            address: localDNS,
+            address: localDNS === 'localhost' ? 'local' : localDNS,
             detour: "direct",
             tag: "dns-direct"
         },
@@ -77,10 +77,6 @@ function buildSingBoxDNS (proxySettings, outboundAddrs, isWarp) {
 
     const rules = [
         outboundRule,
-        {
-            domain: "www.gstatic.com",
-            server: "dns-local" 
-        },
         { 
             domain: [
                 "raw.githubusercontent.com", 
@@ -403,6 +399,8 @@ function buildSingBoxVLOutbound (proxySettings, remark, address, port, host, sni
             path: path,
             type: "ws"
         },
+        tcp_fast_open: true,
+        tcp_multi_path: true,
         tag: remark
     };
 
@@ -440,6 +438,8 @@ function buildSingBoxTROutbound (proxySettings, remark, address, port, host, sni
             path: path,
             type: "ws"
         },
+        tcp_fast_open: true,
+        tcp_multi_path: true,
         tag: remark
     }
 
@@ -591,7 +591,6 @@ export async function getSingBoxWarpConfig (request, env) {
     const {rules, rule_set} = buildSingBoxRoutingRules(proxySettings);
     config.dns.servers = dnsObject.servers;
     config.dns.rules = dnsObject.rules;
-    config.dns.strategy = proxySettings.warpEnableIPv6 ? "prefer_ipv4" : "ipv4_only";
     if (dnsObject.fakeip) config.dns.fakeip = dnsObject.fakeip;
     config.route.rules = rules;
     config.route.rule_set = rule_set;
@@ -671,7 +670,6 @@ export async function getSingBoxCustomConfig(request, env) {
     config.dns.servers = dnsObject.servers;
     config.dns.rules = dnsObject.rules;
     if (dnsObject.fakeip) config.dns.fakeip = dnsObject.fakeip;
-    config.dns.strategy = enableIPv6 ? "prefer_ipv4" : "ipv4_only";
     config.route.rules = rules;
     config.route.rule_set = rule_set;
     const selector = config.outbounds[0];
@@ -755,6 +753,7 @@ const singboxConfigTemp = {
     dns: {
         servers: [],
         rules: [],
+        strategy: "ipv4_only",
         independent_cache: true
     },
     inbounds: [
